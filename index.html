@@ -697,7 +697,11 @@
           
           fetch(GAS_API_URL, {
             method: "POST",
-            body: JSON.stringify(requestBody)
+            headers: {
+              "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify(requestBody),
+            redirect: "follow"
           })
           .then(res => res.json())
           .then(data => {
@@ -735,13 +739,16 @@
 
     // Memeriksa status koneksi server pada awal pemuatan
     function checkServerConnection() {
-      callAPI("checkConnection").then(() => {
-        if (!isOfflineFallback) {
+      callAPI("checkConnection").then((res) => {
+        if (res && res.status === "success") {
+          isOfflineFallback = false;
           const dot = document.getElementById("statusDot");
           const text = document.getElementById("statusText");
-          dot.className = "w-2.5 h-2.5 bg-emerald-400 rounded-full";
-          text.innerText = "Database Apps Script Aktif";
-          text.className = "text-emerald-300";
+          if (dot && text) {
+            dot.className = "w-2.5 h-2.5 bg-emerald-400 rounded-full";
+            text.innerText = "Database Apps Script Aktif";
+            text.className = "text-emerald-300";
+          }
         }
       }).catch(() => {
         isOfflineFallback = true;
@@ -955,6 +962,13 @@
       activeBtn.classList.add("border-emerald-500", "text-emerald-600", "font-bold");
     }
 
+    function ensureArray(val) {
+      if (Array.isArray(val)) return val;
+      if (val && Array.isArray(val.data)) return val.data;
+      if (val && Array.isArray(val.students)) return val.students;
+      return [];
+    }
+
     async function loadStudentsForPresensi() {
       const kelas = document.getElementById("presensi-kelas").value;
       const mapel = document.getElementById("presensi-mapel").value;
@@ -972,16 +986,21 @@
       listBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400"><i class="fa-solid fa-spinner animate-spin mr-2"></i> Mengunduh nama siswa...</td></tr>`;
 
       try {
-        const students = await callAPI("getSiswa", { kelas, mapel });
+        const res = await callAPI("getSiswa", { kelas, mapel });
+        let students = ensureArray(res);
+        if (students.length === 0) {
+          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
+          if (fallback.length > 0) students = fallback;
+        }
         loadedStudents = students;
         listBody.innerHTML = "";
 
-        if (students.length === 0) {
+        if (loadedStudents.length === 0) {
           listBody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400">Tidak ada siswa terdaftar untuk kombinasi Kelas & Mapel ini di database.</td></tr>`;
           return;
         }
 
-        students.forEach((student, index) => {
+        loadedStudents.forEach((student, index) => {
           listBody.innerHTML += `
             <tr class="hover:bg-slate-50/50 transition">
               <td class="p-4 pl-6 font-bold text-slate-400">${index + 1}</td>
@@ -1007,7 +1026,7 @@
     }
 
     function applyAllStatus(status) {
-      if (loadedStudents.length === 0) return;
+      if (!Array.isArray(loadedStudents) || loadedStudents.length === 0) return;
       loadedStudents.forEach(student => {
         const el = document.querySelector(`input[name="status-${student.id}"][value="${status}"]`);
         if (el) el.checked = true;
@@ -1023,6 +1042,11 @@
 
       if (!kelas || !mapel || !tanggal) {
         showToast("Lengkapi isian Kelas, Mata Pelajaran, dan Tanggal!", "error");
+        return;
+      }
+
+      if (!Array.isArray(loadedStudents) || loadedStudents.length === 0) {
+        showToast("Daftar siswa belum dimuat!", "error");
         return;
       }
 
@@ -1071,16 +1095,21 @@
       listBody.innerHTML = `<tr><td colspan="3" class="p-8 text-center text-slate-400"><i class="fa-solid fa-spinner animate-spin mr-2"></i> Mengunduh nama siswa...</td></tr>`;
 
       try {
-        const students = await callAPI("getSiswa", { kelas, mapel });
+        const res = await callAPI("getSiswa", { kelas, mapel });
+        let students = ensureArray(res);
+        if (students.length === 0) {
+          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
+          if (fallback.length > 0) students = fallback;
+        }
         loadedStudents = students;
         listBody.innerHTML = "";
 
-        if (students.length === 0) {
+        if (loadedStudents.length === 0) {
           listBody.innerHTML = `<tr><td colspan="3" class="p-8 text-center text-slate-400">Tidak ada data siswa ditemukan untuk kelas ini.</td></tr>`;
           return;
         }
 
-        students.forEach((student, index) => {
+        loadedStudents.forEach((student, index) => {
           listBody.innerHTML += `
             <tr class="hover:bg-slate-50/50 transition">
               <td class="p-4 pl-6 font-bold text-slate-400">${index + 1}</td>
@@ -1091,7 +1120,7 @@
             </tr>
           `;
         });
-        fetchAndPopulateExistingNilai();
+        await fetchAndPopulateExistingNilai();
       } catch (err) {
         listBody.innerHTML = `<tr><td colspan="3" class="p-8 text-center text-rose-500">Terjadi gangguan database.</td></tr>`;
       }
@@ -1125,7 +1154,10 @@
         detailSelect.appendChild(opt);
         detailSelect.disabled = true;
       }
-      fetchAndPopulateExistingNilai();
+
+      if (Array.isArray(loadedStudents) && loadedStudents.length > 0) {
+        fetchAndPopulateExistingNilai();
+      }
     }
 
     async function fetchAndPopulateExistingNilai() {
@@ -1136,7 +1168,7 @@
       const badge = document.getElementById("nilai-info-badge");
       const badgeText = document.getElementById("nilai-info-text");
 
-      if (!kelas || !mapel || !jenis || loadedStudents.length === 0) {
+      if (!kelas || !mapel || !jenis || !Array.isArray(loadedStudents) || loadedStudents.length === 0) {
         if (badge) badge.classList.add("hidden");
         return;
       }
@@ -1162,19 +1194,21 @@
         const scores = (res && res.scores) ? res.scores : {};
         let filledCount = 0;
 
-        loadedStudents.forEach(student => {
-          const input = document.querySelector(`input[name="nilai-${student.id}"]`);
-          if (input) {
-            input.placeholder = "-";
-            const val = scores[student.nama];
-            if (val !== undefined && val !== null && val !== "") {
-              input.value = val;
-              filledCount++;
-            } else {
-              input.value = "";
+        if (Array.isArray(loadedStudents)) {
+          loadedStudents.forEach(student => {
+            const input = document.querySelector(`input[name="nilai-${student.id}"]`);
+            if (input) {
+              input.placeholder = "-";
+              const val = scores[student.nama];
+              if (val !== undefined && val !== null && val !== "") {
+                input.value = val;
+                filledCount++;
+              } else {
+                input.value = "";
+              }
             }
-          }
-        });
+          });
+        }
 
         if (badge && badgeText) {
           if (filledCount > 0) {
@@ -1190,10 +1224,12 @@
           badge.className = "mb-4 p-3 rounded-xl bg-slate-100 border border-slate-200 text-slate-600 text-xs font-bold flex items-center gap-2";
           badgeText.innerHTML = `<i class="fa-solid fa-info-circle"></i> Siap menginput nilai untuk ${colTarget}.`;
         }
-        loadedStudents.forEach(student => {
-          const input = document.querySelector(`input[name="nilai-${student.id}"]`);
-          if (input) input.placeholder = "-";
-        });
+        if (Array.isArray(loadedStudents)) {
+          loadedStudents.forEach(student => {
+            const input = document.querySelector(`input[name="nilai-${student.id}"]`);
+            if (input) input.placeholder = "-";
+          });
+        }
       }
     }
 
@@ -1206,6 +1242,11 @@
 
       if (!kelas || !mapel) {
         showToast("Tentukan Kelas & Mata Pelajaran terlebih dahulu!", "error");
+        return;
+      }
+
+      if (!Array.isArray(loadedStudents) || loadedStudents.length === 0) {
+        showToast("Daftar siswa belum dimuat!", "error");
         return;
       }
 
@@ -1433,7 +1474,12 @@
       }
 
       try {
-        const students = await callAPI("getSiswa", { kelas, mapel });
+        const res = await callAPI("getSiswa", { kelas, mapel });
+        let students = ensureArray(res);
+        if (students.length === 0) {
+          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
+          if (fallback.length > 0) students = fallback;
+        }
         students.forEach(student => {
           nameSelect.innerHTML += `<option value="${student.nama}">${student.nama}</option>`;
         });
