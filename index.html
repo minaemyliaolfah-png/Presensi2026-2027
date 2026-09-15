@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>E-Presensi & Penilaian - SMAN 1 Kapuas Murung V2</title>
+  <title>E-Presensi & Penilaian - SMAN 1 Kapuas Murung V3</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- FontAwesome Icon CDN -->
@@ -626,25 +625,7 @@
 
   <script>
     let isOfflineFallback = false;
-    let localSiswa = [
-      // Kelas XI A - Tingkat Lanjut
-      {id: "S001", nama: "Ananda Putri", kelas: "XI A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S002", nama: "Bagus Wijaya", kelas: "XI A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S003", nama: "Cahya Ningrum", kelas: "XI A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S004", nama: "Dina Mariana", kelas: "XI A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S005", nama: "Faisal Rahman", kelas: "XI A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      // Kelas XII A - Tingkat Lanjut
-      {id: "S006", nama: "Aditya Nugraha", kelas: "XII A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S007", nama: "Bella Safira", kelas: "XII A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      {id: "S008", nama: "Chandra Wijaya", kelas: "XII A", mapel: "Bahasa Indonesia Tingkat Lanjut"},
-      // Kelas XII B - Wajib
-      {id: "S009", nama: "Ahmad Fauzi", kelas: "XII B", mapel: "Bahasa Indonesia"},
-      {id: "S010", nama: "Budi Santoso", kelas: "XII B", mapel: "Bahasa Indonesia"},
-      {id: "S011", nama: "Citra Kirana", kelas: "XII B", mapel: "Bahasa Indonesia"},
-      // Kelas XII C - Wajib
-      {id: "S012", nama: "Dewi Lestari", kelas: "XII C", mapel: "Bahasa Indonesia"},
-      {id: "S013", nama: "Eko Prasetyo", kelas: "XII C", mapel: "Bahasa Indonesia"}
-    ];
+
 
     let currentUser = null;
     let selectedRole = null;
@@ -689,227 +670,82 @@
     /**
      * Dispatcher Panggilan API (Otomatis beralih ke Native Apps Script atau Simulator Preview)
      */
+    const studentRekapCache = new Map();
+    let studentListRequest = 0;
+    let studentDashboardRequest = 0;
+
+    function connectionState(ok, message) {
+      const dot = document.getElementById("statusDot");
+      const label = document.getElementById("statusText");
+      if (dot) dot.className = "w-2.5 h-2.5 rounded-full " + (ok ? "bg-emerald-400" : "bg-rose-400");
+      if (label) label.textContent = message;
+    }
+
     function callAPI(action, params = {}, payload = null) {
+      const writing = action.startsWith("save");
       return new Promise((resolve, reject) => {
-        // 1. Jika dijalankan langsung di server Google Apps Script
-        if (typeof google !== 'undefined' && google.script && google.script.run) {
-          const run = google.script.run
-            .withSuccessHandler(res => resolve(res))
-            .withFailureHandler(err => {
-              console.error("GAS Execution Error:", err);
-              showToast("Koneksi Google Apps Script mengalami hambatan.", "error");
-              reject(err);
-            });
-          
-          if (action === "getSiswa") {
-            run.getSiswa(params.kelas, params.mapel);
-          } else if (action === "getExistingNilai") {
-            run.getExistingNilai(payload.kelas, payload.mapel, payload.jenisPenilaian, payload.detailPenilaian);
-          } else if (action === "getRekap") {
-            run.getRekap(params.kelas, params.mapel);
-          } else if (action === "savePresensi") {
-            run.savePresensi(payload.kelas, payload.mapel, payload.tanggal, payload.dataPresensi);
-          } else if (action === "saveNilai") {
-            run.saveNilai(payload.kelas, payload.mapel, payload.jenisPenilaian, payload.detailPenilaian, payload.dataNilai);
-          } else if (action === "saveJurnal") {
-            run.saveJurnal(payload);
-          } else if (action === "checkConnection") {
-            resolve({ status: "success", message: "Koneksi Google Terbuka!" });
-          }
-        } 
-        // 2. Jika diunggah di GitHub Pages / Server Luar (menggunakan fetch HTTP POST ke Web App Apps Script)
-        else if (GAS_API_URL && !GAS_API_URL.includes("PASTE_URL")) {
-          const requestBody = Object.assign({ action: action }, params, payload || {});
-          
-          fetch(GAS_API_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "text/plain;charset=utf-8"
-            },
-            body: JSON.stringify(requestBody),
-            redirect: "follow"
-          })
-          .then(res => res.json())
-          .then(data => {
-            const dot = document.getElementById("statusDot");
-            const text = document.getElementById("statusText");
-            if (dot && text) {
-              dot.className = "w-2.5 h-2.5 bg-emerald-400 rounded-full";
-              text.innerText = "Database Apps Script Terhubung";
-              text.className = "text-emerald-300";
-            }
-            resolve(data);
-          })
-          .catch(err => {
-            console.warn("Gagal terhubung via API luar, beralih ke mode simulator...", err);
-            isOfflineFallback = true;
-            resolve(simulateOfflineAPI(action, params, payload));
-          });
-        } 
-        else {
-          // 3. Mode Simulator (Offline Preview)
-          isOfflineFallback = true;
-          const dot = document.getElementById("statusDot");
-          const text = document.getElementById("statusText");
-          dot.className = "w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse";
-          text.innerText = "Mode Simulator (Offline)";
-          text.className = "text-amber-400";
-          
-          setTimeout(() => {
-            const res = simulateOfflineAPI(action, params, payload);
-            resolve(res);
-          }, 300);
+        let settled = false;
+        const timer = setTimeout(() => fail(new Error(writing
+          ? "Waktu tunggu habis. Status penyimpanan belum diketahui; periksa Rekap sebelum mengirim ulang."
+          : "Server terlalu lama merespons. Coba muat ulang; data contoh tidak digunakan.")), 45000);
+        function fail(error) {
+          if (settled) return;
+          settled = true; clearTimeout(timer);
+          connectionState(false, "Koneksi gagal — tidak memakai data contoh");
+          reject(error instanceof Error ? error : new Error(error.message || String(error)));
         }
+        function done(data) {
+          if (settled) return;
+          if (!data || data.success === false) return fail(new Error(data && data.message || "Respons server kosong."));
+          if (action === "getSiswa" && !Array.isArray(data)) return fail(new Error("Respons daftar siswa tidak valid."));
+          if (action === "getRekap" && (!Array.isArray(data.presensi) || !Array.isArray(data.nilai))) return fail(new Error("Respons rekap tidak valid."));
+          settled = true; clearTimeout(timer);
+          if (writing) studentRekapCache.clear();
+          connectionState(true, "Database Apps Script Terhubung");
+          resolve(data);
+        }
+        try {
+          if (typeof google !== "undefined" && google.script && google.script.run) {
+            const run = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+            if (action === "getSiswa") run.getSiswa(params.kelas, params.mapel);
+            else if (action === "getRekap") run.getRekap(params.kelas, params.mapel);
+            else if (action === "getExistingNilai") run.getExistingNilai(payload.kelas, payload.mapel, payload.jenisPenilaian, payload.detailPenilaian);
+            else if (action === "savePresensi") run.savePresensi(payload.kelas, payload.mapel, payload.tanggal, payload.dataPresensi);
+            else if (action === "saveNilai") run.saveNilai(payload.kelas, payload.mapel, payload.jenisPenilaian, payload.detailPenilaian, payload.dataNilai);
+            else if (action === "saveJurnal") run.saveJurnal(payload);
+            else if (action === "checkConnection") run.checkConnection();
+            else fail(new Error("Aksi tidak dikenal."));
+          } else if (GAS_API_URL && !GAS_API_URL.includes("PASTE_URL")) {
+            fetch(GAS_API_URL, {
+              method: "POST",
+              headers: {"Content-Type": "text/plain;charset=utf-8"},
+              body: JSON.stringify(Object.assign({action}, params, payload || {})),
+              redirect: "follow"
+            }).then(res => {
+              if (!res.ok) throw new Error("HTTP " + res.status + ". Periksa deployment dan izin akses.");
+              return res.json();
+            }).then(done).catch(fail);
+          } else fail(new Error("URL Apps Script belum dikonfigurasi."));
+        } catch (error) { fail(error); }
       });
     }
 
-    // Memeriksa status koneksi server pada awal pemuatan
     function checkServerConnection() {
-      callAPI("checkConnection").then((res) => {
-        if (res && res.status === "success") {
-          isOfflineFallback = false;
-          const dot = document.getElementById("statusDot");
-          const text = document.getElementById("statusText");
-          if (dot && text) {
-            dot.className = "w-2.5 h-2.5 bg-emerald-400 rounded-full";
-            text.innerText = "Database Apps Script Aktif";
-            text.className = "text-emerald-300";
-          }
-        }
-      }).catch(() => {
-        isOfflineFallback = true;
-      });
+      callAPI("checkConnection").catch(error => showToast(error.message, "error"));
     }
+    window.onload = checkServerConnection;
 
-    window.onload = function() {
-      checkServerConnection();
-    };
-
-    /**
-     * Algoritma Simulator Luring (Jika diuji coba di luar Google Sheets / Preview Sandbox)
-     */
-    function simulateOfflineAPI(action, params, payload) {
-      if (!localStorage.getItem("offline_presensi")) localStorage.setItem("offline_presensi", JSON.stringify([]));
-      if (!localStorage.getItem("offline_nilai")) localStorage.setItem("offline_nilai", JSON.stringify([]));
-      if (!localStorage.getItem("offline_jurnal")) localStorage.setItem("offline_jurnal", JSON.stringify([]));
-
-      if (action === "getSiswa") {
-        return localSiswa.filter(s => s.kelas === params.kelas && s.mapel === params.mapel);
-      }
-      
-      if (action === "getExistingNilai") {
-        const dbNilai = JSON.parse(localStorage.getItem("offline_nilai") || "[]");
-        const key = payload.jenisPenilaian === "Sumatif Akhir" ? "Sumatif" : (payload.jenisPenilaian + payload.detailPenilaian);
-        const scores = {};
-        dbNilai.forEach(item => {
-          if (item.kelas === payload.kelas && item.mapel === payload.mapel) {
-            scores[item.nama] = (item[key] !== undefined && item[key] !== null && item[key] !== "") ? item[key] : "";
-          }
-        });
-        return { colName: key, scores: scores };
-      }
-
-      if (action === "getRekap") {
-        const dbPresensi = JSON.parse(localStorage.getItem("offline_presensi"));
-        const dbNilai = JSON.parse(localStorage.getItem("offline_nilai"));
-        const dbJurnal = JSON.parse(localStorage.getItem("offline_jurnal"));
-        const kelas = params.kelas;
-        const mapel = params.mapel;
-
-        const classStudents = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
-
-        const presensi = classStudents.map(s => {
-          const r = dbPresensi.find(p => p.nama === s.nama && p.kelas === kelas && p.mapel === mapel) || { catatan: [] };
-          const item = { nama: s.nama, kelas: kelas, mapel: mapel, H: 0, S: 0, I: 0, A: 0, totalSesi: 0, detail: [] };
-          r.catatan.forEach(c => {
-            item.totalSesi++;
-            item[c.status] = (item[c.status] || 0) + 1;
-            item.detail.push({ tanggal: c.tanggal, status: c.status });
-          });
-          item.persentaseKehadiran = item.totalSesi > 0 ? Math.round((item.H / item.totalSesi) * 100) : 0;
-          return item;
-        });
-
-        const nilai = classStudents.map(s => {
-          const r = dbNilai.find(n => n.nama === s.nama && n.kelas === kelas && n.mapel === mapel) || {};
-          return {
-            nama: s.nama, kelas: kelas, mapel: mapel,
-            Tugas1: r.Tugas1 || "", Tugas2: r.Tugas2 || "", Tugas3: r.Tugas3 || "", Tugas4: r.Tugas4 || "", Tugas5: r.Tugas5 || "",
-            Tugas6: r.Tugas6 || "", Tugas7: r.Tugas7 || "", Tugas8: r.Tugas8 || "", Tugas9: r.Tugas9 || "", Tugas10: r.Tugas10 || "",
-            UH1: r.UH1 || "", UH2: r.UH2 || "", UH3: r.UH3 || "", UH4: r.UH4 || "", UH5: r.UH5 || "",
-            RTTG: r.RTTG || "", RTUH: r.RTUH || "", Sumatif: r.Sumatif || "", Nilai_Akhir: r.Nilai_Akhir || ""
-          };
-        });
-
-        const jurnal = dbJurnal.filter(j => j.kelas === kelas && j.mapel === mapel);
-
-        return { presensi, nilai, jurnal };
-      }
-
-      if (action === "savePresensi") {
-        const dbPresensi = JSON.parse(localStorage.getItem("offline_presensi"));
-        payload.dataPresensi.forEach(p => {
-          let rec = dbPresensi.find(item => item.nama === p.nama && item.kelas === payload.kelas && item.mapel === payload.mapel);
-          if (!rec) {
-            rec = { nama: p.nama, kelas: payload.kelas, mapel: payload.mapel, catatan: [] };
-            dbPresensi.push(rec);
-          }
-          const idx = rec.catatan.findIndex(c => c.tanggal === payload.tanggal);
-          if (idx !== -1) rec.catatan[idx].status = p.status;
-          else rec.catatan.push({ tanggal: payload.tanggal, status: p.status });
-        });
-        localStorage.setItem("offline_presensi", JSON.stringify(dbPresensi));
-        return { success: true, message: "Simulator: Presensi berhasil tersimpan di browser lokal!" };
-      }
-
-      if (action === "saveNilai") {
-        const dbNilai = JSON.parse(localStorage.getItem("offline_nilai"));
-        const key = payload.jenisPenilaian === "Sumatif Akhir" ? "Sumatif" : (payload.jenisPenilaian + payload.detailPenilaian);
-
-        payload.dataNilai.forEach(n => {
-          let rec = dbNilai.find(item => item.nama === n.nama && item.kelas === payload.kelas && item.mapel === payload.mapel);
-          if (!rec) {
-            rec = { nama: n.nama, kelas: payload.kelas, mapel: payload.mapel };
-            dbNilai.push(rec);
-          }
-          rec[key] = n.nilai !== "" ? Number(n.nilai) : "";
-
-          const tArr = [
-            rec.Tugas1, rec.Tugas2, rec.Tugas3, rec.Tugas4, rec.Tugas5,
-            rec.Tugas6, rec.Tugas7, rec.Tugas8, rec.Tugas9, rec.Tugas10
-          ].filter(v => v !== undefined && v !== "");
-          rec.RTTG = tArr.length > 0 ? (tArr.reduce((a, b) => a + b, 0) / tArr.length).toFixed(2) : "";
-
-          const uArr = [rec.UH1, rec.UH2, rec.UH3, rec.UH4, rec.UH5].filter(v => v !== undefined && v !== "");
-          rec.RTUH = uArr.length > 0 ? (uArr.reduce((a, b) => a + b, 0) / uArr.length).toFixed(2) : "";
-
-          const rttgNum = rec.RTTG !== "" ? Number(rec.RTTG) : 0;
-          const rtuhNum = rec.RTUH !== "" ? Number(rec.RTUH) : 0;
-          const sumatifNum = rec.Sumatif !== "" ? Number(rec.Sumatif) : 0;
-
-          if (rec.RTTG !== "" || rec.RTUH !== "" || rec.Sumatif !== "") {
-            rec.Nilai_Akhir = ((rttgNum + rtuhNum + sumatifNum) / 3).toFixed(2);
-          } else {
-            rec.Nilai_Akhir = "";
-          }
-        });
-        localStorage.setItem("offline_nilai", JSON.stringify(dbNilai));
-        return { success: true, message: "Simulator: Penilaian sukses disimpan di browser lokal!" };
-      }
-
-      if (action === "saveJurnal") {
-        const dbJurnal = JSON.parse(localStorage.getItem("offline_jurnal"));
-        dbJurnal.push({
-          tanggal: payload.tanggal,
-          kelas: payload.kelas,
-          mapel: payload.mapel,
-          materi: payload.materi,
-          kegiatan: payload.kegiatan,
-          link: "Tidak ada lampiran"
-        });
-        localStorage.setItem("offline_jurnal", JSON.stringify(dbJurnal));
-        return { success: true, message: "Simulator: Jurnal Berhasil disimpan di browser lokal!" };
-      }
+    function getStudentRekap(kelas, mapel) {
+      const key = JSON.stringify([kelas, mapel]);
+      const previous = studentRekapCache.get(key);
+      if (previous && Date.now() - previous.created < 30000) return previous.promise;
+      const entry = {created: Date.now()};
+      entry.promise = callAPI("getRekap", {kelas, mapel}).catch(error => {
+        if (studentRekapCache.get(key) === entry) studentRekapCache.delete(key);
+        throw error;
+      });
+      studentRekapCache.set(key, entry);
+      return entry.promise;
     }
 
     function handleLogin(event) {
@@ -1014,10 +850,7 @@
       try {
         const res = await callAPI("getSiswa", { kelas, mapel });
         let students = ensureArray(res);
-        if (students.length === 0) {
-          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
-          if (fallback.length > 0) students = fallback;
-        }
+
         loadedStudents = students;
         listBody.innerHTML = "";
 
@@ -1123,10 +956,7 @@
       try {
         const res = await callAPI("getSiswa", { kelas, mapel });
         let students = ensureArray(res);
-        if (students.length === 0) {
-          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
-          if (fallback.length > 0) students = fallback;
-        }
+
         loadedStudents = students;
         listBody.innerHTML = "";
 
@@ -1486,32 +1316,34 @@
     }
 
     async function loadStudentsForSiswaPortal() {
+      const request = ++studentListRequest;
+      ++studentDashboardRequest;
+      studentRekapCache.clear();
       const kelas = document.getElementById("siswa-kelas").value;
       const mapel = document.getElementById("siswa-mapel").value;
-      const nameSelect = document.getElementById("siswa-nama-select");
-      
-      nameSelect.innerHTML = `<option value="">-- Pilih Nama Siswa --</option>`;
+      const select = document.getElementById("siswa-nama-select");
+      select.disabled = true;
+      select.innerHTML = '<option value="">Memuat daftar siswa...</option>';
       document.getElementById("siswa-report-card").classList.add("hidden");
-      document.getElementById("siswa-portal-placeholder").classList.remove("hidden");
-
+      const placeholder = document.getElementById("siswa-portal-placeholder");
+      placeholder.classList.remove("hidden");
+      placeholder.textContent = "Memuat daftar siswa dari database...";
       if (!kelas || !mapel) {
-        nameSelect.disabled = true;
+        select.innerHTML = '<option value="">-- Pilih Nama Siswa --</option>';
+        placeholder.textContent = "Pilih kelas dan mata pelajaran.";
         return;
       }
-
       try {
-        const res = await callAPI("getSiswa", { kelas, mapel });
-        let students = ensureArray(res);
-        if (students.length === 0) {
-          const fallback = localSiswa.filter(s => s.kelas === kelas && s.mapel === mapel);
-          if (fallback.length > 0) students = fallback;
-        }
-        students.forEach(student => {
-          nameSelect.innerHTML += `<option value="${student.nama}">${student.nama}</option>`;
-        });
-        nameSelect.disabled = false;
-      } catch (err) {
-        showToast("Gagal mengunduh katalog siswa.", "error");
+        const students = await callAPI("getSiswa", {kelas, mapel});
+        if (request !== studentListRequest) return;
+        select.innerHTML = '<option value="">-- Pilih Nama Siswa --</option>';
+        students.forEach(student => select.add(new Option(student.nama, student.nama)));
+        select.disabled = students.length === 0;
+        placeholder.textContent = students.length ? "Pilih nama untuk melihat rekap." : "Tidak ada siswa untuk kelas dan mapel ini. Periksa sheet Siswa.";
+      } catch (error) {
+        if (request !== studentListRequest) return;
+        select.innerHTML = '<option value="">Gagal memuat siswa</option>';
+        placeholder.textContent = error.message + " Pilih ulang kelas/mapel untuk mencoba lagi.";
       }
     }
 
@@ -1520,13 +1352,16 @@
       const mapel = document.getElementById("siswa-mapel").value;
       const nama = document.getElementById("siswa-nama-select").value;
 
+      const request = ++studentDashboardRequest;
+      const placeholder = document.getElementById("siswa-portal-placeholder");
+      document.getElementById("siswa-report-card").classList.add("hidden");
+      placeholder.classList.remove("hidden");
+      placeholder.textContent = nama ? "Memuat rekap " + nama + "..." : "Pilih nama siswa.";
       if (!kelas || !mapel || !nama) return;
 
-      document.getElementById("siswa-portal-placeholder").classList.add("hidden");
-      document.getElementById("siswa-report-card").classList.remove("hidden");
-
       try {
-        const data = await callAPI("getRekap", { kelas, mapel });
+        const data = await getStudentRekap(kelas, mapel);
+        if (request !== studentDashboardRequest) return;
         const sPresensi = data.presensi.find(p => p.nama === nama) || { H:0, S:0, I:0, A:0, totalSesi:0, persentaseKehadiran: 0 };
         const sNilai = data.nilai.find(n => n.nama === nama) || { RTTG:0, RTUH:0, Sumatif:0, Nilai_Akhir:0 };
 
@@ -1558,11 +1393,17 @@
           circle.style.strokeDashoffset = offset;
         }
 
-        renderStudentChart(sNilai);
         renderStudentGradeTable(nama, sNilai, ensureArray(data.nilai));
+        placeholder.classList.add("hidden");
+        document.getElementById("siswa-report-card").classList.remove("hidden");
+        try { renderStudentChart(sNilai); } catch (chartError) {
+          console.warn("Grafik tidak tersedia; tabel tetap ditampilkan.", chartError);
+        }
 
       } catch (err) {
-        showToast("Terjadi hambatan rendering dashboard personal.", "error");
+        if (request !== studentDashboardRequest) return;
+        placeholder.textContent = err.message + " Pilih ulang nama untuk mencoba lagi.";
+        showToast(err.message, "error");
       }
     }
 
